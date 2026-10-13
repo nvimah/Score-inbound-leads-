@@ -159,6 +159,6 @@ Licence: *choose one for your own changes (for example MIT) and add a `LICENSE` 
 
 ## Author
 
-**Sharon Wainaina**, systems and automation. [LinkedIn](#) · [Email](#)
+**Sharon Wainaina**, systems and automation. [Email](wainainasharon15@gmail.com)
 
 Demo video: *add link here*
