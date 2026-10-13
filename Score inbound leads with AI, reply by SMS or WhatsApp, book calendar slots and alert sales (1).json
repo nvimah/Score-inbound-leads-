@@ -1,0 +1,1048 @@
+{
+  "name": "Score inbound leads with AI, reply by SMS or WhatsApp, book calendar slots and alert sales",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Score inbound leads with AI, reply by SMS or WhatsApp, book calendar slots and alert sales\n\n**Who it is for.** Sales teams that lose leads in the first hour: agencies, clinics, real estate, B2B services.\n\n**What it does**\n- Normalises the lead from any source (web form, ad platform, HubSpot or GoHighLevel webhook) with a 24 hour duplicate guard.\n- AI qualification returns a score, intent, summary and a drafted reply.\n- Hot leads get an instant SMS or WhatsApp reply, three calendar slots, a 15 minute sales task and a Slack alert.\n- Cooler leads are logged in the CRM and started on a nurture sequence.\n- A second trigger takes voice agent call ended webhooks (Retell, VAPI), writes the summary to the CRM and books a visit when asked.\n\n**Setup**\n1. Set base in Config or replace the HTTP Request nodes with your CRM, calendar, messaging and Slack nodes.\n2. Point the form, ad platform and voice agent webhooks at the two Webhook URLs.\n3. Set the AI credential on the qualification step. Activate.\n\nAll external systems are reached through HTTP Request nodes against `base` in the Config node, so the whole flow imports and runs against any REST backend; swap any of them for the native n8n node of your system. Built and tested on sample data by Finamatik: https://finamatik.com/work/ai-lead-response-engine\n\n**Requirements.** n8n 1.100 or later; for the AI steps, a model endpoint at `base`/llm/complete or the OpenAI or Anthropic node in its place; your own systems reachable over HTTPS.\n\n**How to customise.** Every rule lives in one Code or Config node and is named for what it decides; change the thresholds there, not in the branches.",
+        "height": 1000,
+        "width": 560
+      },
+      "name": "Read me first",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "995b4490-f571-4ac6-9fff-03b2aeaa6ff0"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lead-in",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "name": "Webhook: new lead (form / ad / GHL)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        608,
+        288
+      ],
+      "id": "e74928d2-f696-40cb-a249-4fa46b2efe7c",
+      "webhookId": "e1b97981-ae84-4216-8662-35e828b215b8"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "call-ended",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "name": "Webhook: voice agent call ended (Retell / VAPI)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        608,
+        1600
+      ],
+      "id": "8ad5c840-6d4a-4b50-b0f5-7e644716cec2",
+      "webhookId": "e3d9e7fa-9086-40a8-a4f7-46de3b083883"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "c1",
+              "name": "base",
+              "value": "https://api.your-company.example",
+              "type": "string"
+            },
+            {
+              "id": "c2",
+              "name": "test_mode",
+              "value": true,
+              "type": "boolean"
+            },
+            {
+              "id": "c3",
+              "name": "hot_threshold",
+              "value": 70,
+              "type": "number"
+            },
+            {
+              "id": "c4",
+              "name": "brand",
+              "value": "Bright Smile Dental",
+              "type": "string"
+            },
+            {
+              "id": "5459cfb4-a975-456c-ba49-9c762b1e9972",
+              "name": "owner_email",
+              "value": "hewnavion@gmail.com",
+              "type": "string"
+            },
+            {
+              "id": "80e359e6-854c-4a45-ad08-26fd57bd8f89",
+              "name": "booking_link",
+              "value": "https://cal.com/shazzy-navion-urmax3/30min",
+              "type": "string"
+            },
+            {
+              "id": "d5f0e3e0-e969-4daa-97ba-8e2493e60a04",
+              "name": "from_name",
+              "value": "Sarah at Bright Smile",
+              "type": "string"
+            },
+            {
+              "id": "eec547d8-e9ba-405f-843d-5e28932d6ab3",
+              "name": "timezone",
+              "value": "America/Chicago",
+              "type": "string"
+            },
+            {
+              "id": "96a6f19e-45ae-4e2a-9c3a-3c2b90b78186",
+              "name": "test_email",
+              "value": "hewnavion@gmail.com",
+              "type": "string"
+            },
+            {
+              "id": "ed720a5f-64b6-4888-a6e7-38af1063d721",
+              "name": "cal_event_type_id",
+              "value": "01a1339a-da43-76ed-b31a-2e8dc4681903",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        832,
+        288
+      ],
+      "id": "8d58da63-a200-43b4-9660-68d568c49da6"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normalise any lead source into one shape and drop duplicates within 24h (workflow static data).\nconst body = $input.first().json.body || $input.first().json;\nconst cfg = $('Config').first().json;\nconst lead = {\n  name: body.name || body.full_name || [body.first_name, body.last_name].filter(Boolean).join(' ') || 'Unknown',\n  email: (body.email || '').toLowerCase().trim(),\n  phone: (body.phone || body.phone_number || '').replace(/[^+\\d]/g, ''),\n  service: body.service || body.interest || body.form_name || 'general enquiry',\n  message: body.message || body.notes || body.comments || '',\n  source: body.source || body.utm_source || 'web-form',\n  company: body.company || '', budget: body.budget || '',\n  received_at: new Date().toISOString()\n};\nif (!lead.email && !lead.phone) throw new Error('Lead has neither email nor phone, rejected');\nconst key = lead.email || lead.phone;\nconst seen = $getWorkflowStaticData('global'); seen.leads = seen.leads || {};\nconst last = seen.leads[key];\nlead.duplicate = !!(last && Date.now() - last < 24*3600*1000);\nseen.leads[key] = Date.now();\nreturn [{ json: { ...lead, cfg } }];"
+      },
+      "name": "Normalise + dedupe (24h)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        288
+      ],
+      "id": "c6cfc5fc-67da-48e8-8dbb-b8a10387fe5b"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "d1",
+              "leftValue": "={{ $json.duplicate }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "false"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Not a duplicate?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1264,
+        288
+      ],
+      "id": "bc3c17f2-4f7a-408f-bae2-f6060f6955f1"
+    },
+    {
+      "parameters": {
+        "jsCode": "const lead = $('Normalise + dedupe (24h)').first().json;\nconst first = $input.first().json;\nconst raw = first.content?.parts?.[0]?.text ?? first.text ?? '';\nlet ai;\ntry {\n  ai = JSON.parse(String(raw).replace(/```json|```/g, '').trim());\n} catch (e) {\n  ai = { score: 0, verdict: 'cold', summary: 'AI parse failed', draft_reply: '' };\n}\nconst score = Number(ai.score ?? 0);\nreturn [{ json: { ...lead, ai, score, hot: score >= lead.cfg.hot_threshold, usage: first.usage } }];"
+      },
+      "name": "Merge lead + AI verdict",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1728,
+        192
+      ],
+      "id": "e427a5c3-1c0e-4de2-ba83-bb241bf7655d"
+    },
+    {
+      "parameters": {
+        "jsCode": "const lead = $('Merge lead + AI verdict').first().json;\nconst crm = $input.first().json;\nreturn [{ json: {\n  ...lead,\n  contact_id: crm.vid ?? crm.id,\n  crm_status: crm.isNew === undefined ? 'unknown' : (crm.isNew ? 'created' : 'updated')\n} }];"
+      },
+      "name": "Attach contact id",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2160,
+        192
+      ],
+      "id": "6d034e9f-defc-493e-932f-37eb028c6ec2"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "e1",
+              "leftValue": "={{ $json.hot }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Hot lead?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2384,
+        192
+      ],
+      "id": "9115a9d9-1a76-488f-bf3e-c9586d4fdfd1"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/notes",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  properties: {\n    hs_timestamp: $now.toUTC().toISO(),\n    hs_note_body: 'AI verdict: ' + $('Attach contact id').first().json.ai.verdict + ' (score ' + $('Attach contact id').first().json.score + ')\\n' + $('Attach contact id').first().json.ai.summary + '\\n\\nOriginal message: ' + $('Attach contact id').first().json.message\n  },\n  associations: [{\n    to: { id: $('Attach contact id').first().json.contact_id },\n    types: [{ associationCategory: 'HUBSPOT_DEFINED', associationTypeId: 202 }]\n  }]\n}) }}",
+        "options": {}
+      },
+      "name": "CRM: note with AI summary",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4176,
+        192
+      ],
+      "id": "cbdf6cc1-98c7-4034-9958-d964f268f862",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "0576s5pBn9Rh71ob",
+          "name": "Header Auth account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const l = $('Attach contact id').first().json;\nreturn [{ json: { ok: true, lead: l.name, score: l.score, route: l.hot ? 'hot: replied + slots offered + rep task' : 'nurture sequence started', contact_id: l.contact_id, tokens: l.usage } }];"
+      },
+      "name": "Respond to webhook",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4400,
+        192
+      ],
+      "id": "7ab29178-c145-40a2-a776-cea99f6d32d6"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { ok: true, skipped: 'duplicate lead within 24h', key: $json.email || $json.phone } }];"
+      },
+      "name": "Skip duplicate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1504,
+        464
+      ],
+      "id": "76eaac3a-d23d-484f-9f1d-5b5f42460db6"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "f1",
+              "name": "base",
+              "value": "https://api.your-company.example",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "name": "Config (calls)",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        832,
+        1600
+      ],
+      "id": "f0b60910-cc3a-48f7-8365-4133700c35ab"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Retell/VAPI-style payload: {call_id, from, to, transcript, duration_s, recording_url}\nconst b = $input.first().json.body || $input.first().json;\nif (!b.transcript) throw new Error('No transcript in call payload');\nreturn [{ json: { call_id: b.call_id, phone: (b.from || '').replace(/[^+\\d]/g,''), transcript: b.transcript, duration_s: b.duration_s, base: $json.base } }];"
+      },
+      "name": "Parse call payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        1600
+      ],
+      "id": "f4751b5e-2a69-424c-99aa-a26aea3e6c1a"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.base }}/llm/complete",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ task: 'summarise_call', input: { transcript: $json.transcript } }) }}",
+        "options": {}
+      },
+      "name": "AI: summarise call + detect booking intent",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1264,
+        1600
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "id": "db77f7bf-be7e-4bad-8874-da14eb37c2ef"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Parse call payload').first().json.base }}/crm/contacts/upsert",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ phone: $('Parse call payload').first().json.phone, source: 'inbound-call', last_call_outcome: $json.output.outcome }) }}",
+        "options": {}
+      },
+      "name": "CRM: upsert caller",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1488,
+        1600
+      ],
+      "id": "5cd7658a-298c-46cd-ba96-6541426fc829"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Parse call payload').first().json.base }}/crm/notes",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ contact_id: $json.id, text: 'Call ' + $('Parse call payload').first().json.call_id + ' (' + $('Parse call payload').first().json.duration_s + 's): ' + $('AI: summarise call + detect booking intent').first().json.output.summary + ' | follow-up: ' + $('AI: summarise call + detect booking intent').first().json.output.follow_up }) }}",
+        "options": {}
+      },
+      "name": "CRM: call summary note",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1712,
+        1600
+      ],
+      "id": "04351a9b-c6c2-4272-822a-2381bd5a4845"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "g1",
+              "leftValue": "={{ $('AI: summarise call + detect booking intent').first().json.output.outcome }}",
+              "rightValue": "appointment_requested",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Appointment requested?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1920,
+        1600
+      ],
+      "id": "7159b4ad-d27f-4afa-9071-5b2f3eee27b2"
+    },
+    {
+      "parameters": {
+        "url": "={{ $('Parse call payload').first().json.base }}/calendar/slots",
+        "options": {}
+      },
+      "name": "Calendar: slots",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2144,
+        1504
+      ],
+      "id": "8f53ee06-ac06-4109-bf77-b458d21d25e9"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Parse call payload').first().json.base }}/calendar/book",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ slot: $json.slots[0], contact: $('CRM: upsert caller').first().json.id, reason: 'from call ' + $('Parse call payload').first().json.call_id }) }}",
+        "options": {}
+      },
+      "name": "Book first slot",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2368,
+        1504
+      ],
+      "id": "ef22f108-2e77-4ed2-8cce-51a73009c690"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Parse call payload').first().json.base }}/messages/send",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: 'sms', to: $('Parse call payload').first().json.phone, body: 'Booked: technician visit ' + $json.slot.replace('T',' ') + '. Reply R to reschedule.' }) }}",
+        "options": {}
+      },
+      "name": "SMS confirmation",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2592,
+        1504
+      ],
+      "id": "b37ca0b8-3083-4776-810c-cbb48f60feea"
+    },
+    {
+      "parameters": {
+        "jsCode": "const ai = $('AI: summarise call + detect booking intent').first().json.output;\nlet slot = null; try { slot = $('Book first slot').first().json.slot; } catch (e) {}\nreturn [{ json: { ok: true, call_id: $('Parse call payload').first().json.call_id, outcome: ai.outcome, booked: ai.outcome === 'appointment_requested', slot } }];"
+      },
+      "name": "Respond (call)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2800,
+        1600
+      ],
+      "id": "ea24d9b7-f5b0-41d0-8837-b640c480ef56"
+    },
+    {
+      "parameters": {},
+      "name": "Error trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        640,
+        736
+      ],
+      "id": "fd57620f-c5d2-402e-b4f5-c535d9656dcc"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "c1",
+              "name": "base",
+              "value": "https://api.your-company.example",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "name": "Config (errors)",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        768,
+        736
+      ],
+      "id": "4a116e9f-bf6a-4f59-a54b-4b2a73e2e031"
+    },
+    {
+      "parameters": {
+        "content": "## Setup in three steps\n\n1. Open **Config** and set `base`, the CRM and calendar endpoints and the messaging sender, or swap the HTTP Request nodes for your native nodes.\n2. Point the two AI steps at your model endpoint (`base`/llm/complete) or swap them for the OpenAI or Anthropic node.\n3. Point your web form, ad platform or voice agent webhook at the Webhook URL and activate.\n\nSend one hot lead, one cool lead and one duplicate before going live.",
+        "height": 300,
+        "width": 560,
+        "color": 7
+      },
+      "name": "Setup steps",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        1024
+      ],
+      "id": "fd565e26-9361-4dd3-a934-091c7b2beafd"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "models/gemini-3-flash-preview"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=You qualify inbound leads for a local service business. Return ONLY valid JSON, with no markdown fences and no extra text, in exactly this shape:\n{\"score\": <0-100>, \"verdict\": \"hot\" | \"warm\" | \"cold\", \"summary\": \"<one sentence>\", \"draft_reply\": \"<2-3 friendly sentences replying to the lead, no pricing promises>\"}\n\nScore higher for: a clear need, urgency (\"this week\", \"ASAP\"), a stated budget, and a specific service. Score lower for: vague messages, no contact details, or spam.\n\nLead:\nName: {{ $json.name }}\nService: {{ $json.service }}\nMessage: {{ $json.message }}\nCompany: {{ $json.company }}\nBudget: {{ $json.budget }}"
+            }
+          ]
+        },
+        "jsonOutput": true,
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1.2,
+      "position": [
+        1376,
+        192
+      ],
+      "id": "5d3b319e-8c62-4655-bb8e-80bd9f111a7c",
+      "name": "Message a model",
+      "credentials": {
+        "googlePalmApi": {
+          "id": null,
+          "name": "",
+          "__aiGatewayManaged": true
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "email": "={{ $json.email }}",
+        "additionalFields": {
+          "firstName": "={{ $json.name.split(' ')[0] }}",
+          "lastName": "={{ $json.name.split(' ').slice(1).join(' ') }}",
+          "phoneNumber": "={{ $json.phone }}"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.hubspot",
+      "typeVersion": 2.2,
+      "position": [
+        1952,
+        192
+      ],
+      "id": "57e33558-60cf-473b-b787-cf08412c676c",
+      "name": "Create or update a contact",
+      "credentials": {
+        "hubspotOAuth2Api": {
+          "id": "3xZTkEssITbBp0PM",
+          "name": "HubSpot account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.cfg.test_mode ? $json.cfg.test_email : $json.email }}",
+        "subject": "={{ $json.cfg.test_mode ? '[TEST] ' : '' }}Re: your {{ $json.service }} enquiry",
+        "emailType": "text",
+        "message": "={{ $json.ai.draft_reply }}   You can pick a time that suits you here:   {{ $json.cfg.booking_link }} Best, {{ $json.cfg.brand }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        2832,
+        192
+      ],
+      "id": "d93c8efa-1069-4d44-9ee9-6955e9a6046b",
+      "name": "Send a message",
+      "webhookId": "c2f1b079-0220-46f3-a50e-53349f60c9d4",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "wavFS3NsxEPO6ryq",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "engagement",
+        "type": "task",
+        "dueDate": "={{ $now.plus({minutes: 15}).toUTC().toISO() }}",
+        "metadata": {
+          "body": "={{ $('Attach contact id').first().json.ai.summary }}",
+          "subject": "=Call back: {{ $('Attach contact id').first().json.name }} ({{ $('Attach contact id').first().json.ai.verdict }}, score {{ $('Attach contact id').first().json.score }})"
+        },
+        "additionalFields": {
+          "associations": {
+            "contactIds": "={{ $('Attach contact id').first().json.contact_id\n}}"
+          }
+        }
+      },
+      "type": "n8n-nodes-base.hubspot",
+      "typeVersion": 2.2,
+      "position": [
+        3056,
+        192
+      ],
+      "id": "d2331b65-ebba-4c92-b54d-5813b4724738",
+      "name": "Create an engagement",
+      "credentials": {
+        "hubspotOAuth2Api": {
+          "id": "3xZTkEssITbBp0PM",
+          "name": "HubSpot account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Attach contact id').first().json.cfg.test_mode ? $('Attach contact id').first().json.cfg.test_email : $('Attach contact id').first().json.cfg.owner_email }}",
+        "subject": "=🔥 Hot lead: {{ $('Attach contact id').first().json.name }} (score {{ $('Attach contact id').first().json.score }})",
+        "emailType": "text",
+        "message": "=New hot lead just came in.  Name: {{ $('Attach contact id').first().json.name }} Email: {{ $('Attach contact id').first().json.email }} Phone: {{ $('Attach contact id').first().json.phone }} Service: {{ $('Attach contact id').first().json.service }} Message: {{ $('Attach contact id').first().json.message }}  AI summary: {{ $('Attach contact id').first().json.ai.summary }}  They've already been sent an instant reply with your booking link. Please follow up within 15 minutes.",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        3280,
+        192
+      ],
+      "id": "3d24c396-36a5-4dcb-8c4e-74547f6c7180",
+      "name": "Send a message1",
+      "webhookId": "76f74e0c-7715-432d-9587-3cf2ddb2f361",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "wavFS3NsxEPO6ryq",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Attach contact id').first().json.cfg.test_mode ? $('Attach contact id').first().json.cfg.test_email : $('Attach contact id').first().json.email }}",
+        "subject": "={{ $('Attach contact id').first().json.cfg.test_mode ? '[TEST] ' : '' }}Thanks for reaching out, {{ $('Attach contact id').first().json.name.split(' ')[0] }}",
+        "emailType": "text",
+        "message": "=Hi {{ $('Attach contact id').first().json.name.split(' ')[0] }},  Thanks for getting in touch with {{ $('Attach contact id').first().json.cfg.brand }}. We've received your message and will review it shortly.  If you'd like to talk sooner, you can pick a time that suits you here: {{ $('Attach contact id').first().json.cfg.booking_link }}  Best, {{ $('Attach contact id').first().json.cfg.brand }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        3008,
+        480
+      ],
+      "id": "dadaebda-cbc9-402a-adc0-68692f300487",
+      "name": "Send a message2",
+      "webhookId": "cb967b35-03e3-41e3-9957-171df1f4639f",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "wavFS3NsxEPO6ryq",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "hewnavion@gmail.com",
+        "subject": "Lead workflow failed",
+        "emailType": "text",
+        "message": "={{ $json.workflow.name }} and {{ $json.execution.error.message }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        992,
+        736
+      ],
+      "id": "67827a85-576e-4825-b508-0fa854de2b1b",
+      "name": "Send a message3",
+      "webhookId": "4b993104-5f51-4821-b239-81533330ff2e",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "wavFS3NsxEPO6ryq",
+          "name": "Gmail account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook: new lead (form / ad / GHL)": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Normalise + dedupe (24h)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalise + dedupe (24h)": {
+      "main": [
+        [
+          {
+            "node": "Not a duplicate?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Not a duplicate?": {
+      "main": [
+        [
+          {
+            "node": "Message a model",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Skip duplicate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge lead + AI verdict": {
+      "main": [
+        [
+          {
+            "node": "Create or update a contact",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Attach contact id": {
+      "main": [
+        [
+          {
+            "node": "Hot lead?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hot lead?": {
+      "main": [
+        [
+          {
+            "node": "Send a message",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send a message2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CRM: note with AI summary": {
+      "main": [
+        [
+          {
+            "node": "Respond to webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook: voice agent call ended (Retell / VAPI)": {
+      "main": [
+        [
+          {
+            "node": "Config (calls)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config (calls)": {
+      "main": [
+        [
+          {
+            "node": "Parse call payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse call payload": {
+      "main": [
+        [
+          {
+            "node": "AI: summarise call + detect booking intent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI: summarise call + detect booking intent": {
+      "main": [
+        [
+          {
+            "node": "CRM: upsert caller",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CRM: upsert caller": {
+      "main": [
+        [
+          {
+            "node": "CRM: call summary note",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CRM: call summary note": {
+      "main": [
+        [
+          {
+            "node": "Appointment requested?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Appointment requested?": {
+      "main": [
+        [
+          {
+            "node": "Calendar: slots",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond (call)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calendar: slots": {
+      "main": [
+        [
+          {
+            "node": "Book first slot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Book first slot": {
+      "main": [
+        [
+          {
+            "node": "SMS confirmation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SMS confirmation": {
+      "main": [
+        [
+          {
+            "node": "Respond (call)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Error trigger": {
+      "main": [
+        [
+          {
+            "node": "Config (errors)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config (errors)": {
+      "main": [
+        [
+          {
+            "node": "Send a message3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message a model": {
+      "main": [
+        [
+          {
+            "node": "Merge lead + AI verdict",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create or update a contact": {
+      "main": [
+        [
+          {
+            "node": "Attach contact id",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send a message": {
+      "main": [
+        [
+          {
+            "node": "Create an engagement",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create an engagement": {
+      "main": [
+        [
+          {
+            "node": "Send a message1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send a message1": {
+      "main": [
+        [
+          {
+            "node": "CRM: note with AI summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send a message2": {
+      "main": [
+        [
+          {
+            "node": "CRM: note with AI summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "36NsY8kP1sHCtOow",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "versionId": "019a1d79-8021-481c-b4a7-e240f6bac583",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "f2336f66a1c09134a19475af3d5fee6f61d23a3fb12ec03fb087df35d03b7baa"
+  },
+  "nodeGroups": [],
+  "id": "36NsY8kP1sHCtOow",
+  "tags": []
+}
